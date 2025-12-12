@@ -13,24 +13,19 @@ This is a third-party tool that uses the WhatsApp Web protocol via `whatsmeow` a
 
 Core implementation is in place. See `docs/spec.md` for the full design notes.
 
-## Build
+## Install / Build
 
-```bash
-go build ./cmd/wacli
-```
+Install via Homebrew (tap):
 
-Optional (recommended): enable SQLite FTS5 for fast message search:
+- `brew install steipete/tap/wacli`
 
-```bash
-go build -tags sqlite_fts5 ./cmd/wacli
-```
+Build locally:
 
-## Install (Homebrew)
+- `go build -tags sqlite_fts5 -o ./dist/wacli ./cmd/wacli`
 
-```bash
-brew tap steipete/tap
-brew install steipete/tap/wacli
-```
+Run:
+
+- `./dist/wacli --help`
 
 ## Quick start
 
