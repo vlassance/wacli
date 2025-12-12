@@ -21,16 +21,32 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Test
-        env:
-          CGO_ENABLED: "1"
+      - name: Install build dependencies
         run: |
-          go test ./...
-          go test -tags sqlite_fts5 ./...
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
 
-      - name: Build
+      - name: Go env
+        run: |
+          go version
+          go env
+
+      - name: Test (default)
         env:
           CGO_ENABLED: "1"
-        run: |
-          go build ./cmd/wacli
-          go build -tags sqlite_fts5 ./cmd/wacli
+        run: go test ./...
+
+      - name: Test (sqlite_fts5)
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags sqlite_fts5 ./...
+
+      - name: Build (default)
+        env:
+          CGO_ENABLED: "1"
+        run: go build ./cmd/wacli
+
+      - name: Build (sqlite_fts5)
+        env:
+          CGO_ENABLED: "1"
+        run: go build -tags sqlite_fts5 ./cmd/wacli
