@@ -156,6 +156,12 @@ Notes:
 - `sync` errors if not authenticated (never prints QR).
 - `--download-media` runs a bounded/concurrent media downloader for messages that contain downloadable media metadata.
 
+### History backfill (best-effort)
+
+WhatsApp Web history is best-effort. If you want to try fetching *older* messages for a specific chat, `wacli` can send an on-demand history request to your primary device:
+
+- `wacli history backfill --chat JID [--count 50] [--requests N]`
+
 ### Messages
 
 - `wacli messages list [--chat JID] [--limit N] [--before TS] [--after TS]`

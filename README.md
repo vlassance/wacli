@@ -1,4 +1,4 @@
-# wacli
+# 🗃️ wacli — WhatsApp CLI: sync, search, send.
 
 WhatsApp CLI built on top of `whatsmeow`, focused on:
 
@@ -50,6 +50,9 @@ pnpm wacli doctor
 # Search messages
 pnpm wacli messages search "meeting"
 
+# Backfill older messages for a chat (best-effort; requires your primary device online)
+pnpm wacli history backfill --chat 1234567890@s.whatsapp.net --requests 10 --count 50
+
 # Download media for a message (after syncing)
 ./wacli media download --chat 1234567890@s.whatsapp.net --id <message-id>
 
@@ -68,7 +71,7 @@ pnpm wacli groups rename --jid 123456789@g.us --name "New name"
 
 This project is heavily inspired by (and learns from) the excellent `whatsapp-cli` by Vicente Reig:
 
-- <https://github.com/vicentereig/whatsapp-cli>
+- [`whatsapp-cli`](https://github.com/vicentereig/whatsapp-cli)
 
 ## High-level UX
 
@@ -79,6 +82,35 @@ This project is heavily inspired by (and learns from) the excellent `whatsapp-cl
 ## Storage
 
 Defaults to `~/.wacli` (override with `--store DIR`).
+
+## Backfilling older history
+
+`wacli sync` stores whatever WhatsApp Web sends opportunistically. To try to fetch *older* messages, use on-demand history sync requests to your **primary device** (your phone).
+
+Important notes:
+
+- This is **best-effort**: WhatsApp may not return full history.
+- Your **primary device must be online**.
+- Requests are **per chat** (DM or group). `wacli` uses the *oldest locally stored message* in that chat as the anchor.
+- Recommended `--count` is `50` per request.
+
+### Backfill one chat
+
+```bash
+pnpm wacli history backfill --chat 1234567890@s.whatsapp.net --requests 10 --count 50
+```
+
+### Backfill all chats (script)
+
+This loops through chats already known in your local DB:
+
+```bash
+pnpm -s wacli -- --json chats list --limit 100000 \
+  | jq -r '.[].JID' \
+  | while read -r jid; do
+      pnpm -s wacli -- history backfill --chat "$jid" --requests 3 --count 50
+    done
+```
 
 ## License
 

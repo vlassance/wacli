@@ -206,6 +206,36 @@ func (c *Client) Upload(ctx context.Context, data []byte, mediaType whatsmeow.Me
 	return cli.Upload(ctx, data, mediaType)
 }
 
+func (c *Client) RequestHistorySyncOnDemand(ctx context.Context, lastKnown types.MessageInfo, count int) (types.MessageID, error) {
+	c.mu.Lock()
+	cli := c.client
+	c.mu.Unlock()
+	if cli == nil || !cli.IsConnected() {
+		return "", fmt.Errorf("not connected")
+	}
+	if count <= 0 {
+		count = 50
+	}
+	if lastKnown.Chat.IsEmpty() || strings.TrimSpace(string(lastKnown.ID)) == "" || lastKnown.Timestamp.IsZero() {
+		return "", fmt.Errorf("invalid last known message info")
+	}
+
+	ownID := types.JID{}
+	if cli.Store != nil && cli.Store.ID != nil {
+		ownID = cli.Store.ID.ToNonAD()
+	}
+	if ownID.IsEmpty() {
+		return "", fmt.Errorf("not authenticated; run `wacli auth`")
+	}
+
+	msg := cli.BuildHistorySyncRequest(&lastKnown, count)
+	resp, err := cli.SendMessage(ctx, ownID, msg, whatsmeow.SendRequestExtra{Peer: true})
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
 func ParseUserOrJID(s string) (types.JID, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

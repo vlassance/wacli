@@ -235,6 +235,15 @@ type Message struct {
 	Snippet   string
 }
 
+type MessageInfo struct {
+	ChatJID    string
+	MsgID      string
+	Timestamp  time.Time
+	FromMe     bool
+	SenderJID  string
+	SenderName string
+}
+
 type Contact struct {
 	JID       string
 	Phone     string
@@ -506,6 +515,38 @@ func (d *DB) GetMessage(chatJID, msgID string) (Message, error) {
 	m.Timestamp = fromUnix(ts)
 	m.FromMe = fromMe != 0
 	return m, nil
+}
+
+func (d *DB) CountMessages() (int64, error) {
+	row := d.sql.QueryRow(`SELECT COUNT(1) FROM messages`)
+	var n int64
+	if err := row.Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func (d *DB) GetOldestMessageInfo(chatJID string) (MessageInfo, error) {
+	chatJID = strings.TrimSpace(chatJID)
+	if chatJID == "" {
+		return MessageInfo{}, fmt.Errorf("chat JID is required")
+	}
+	row := d.sql.QueryRow(`
+		SELECT m.chat_jid, m.msg_id, m.ts, m.from_me, COALESCE(m.sender_jid,''), COALESCE(m.sender_name,'')
+		FROM messages m
+		WHERE m.chat_jid = ?
+		ORDER BY m.ts ASC
+		LIMIT 1
+	`, chatJID)
+	var out MessageInfo
+	var ts int64
+	var fromMe int
+	if err := row.Scan(&out.ChatJID, &out.MsgID, &ts, &fromMe, &out.SenderJID, &out.SenderName); err != nil {
+		return MessageInfo{}, err
+	}
+	out.Timestamp = fromUnix(ts)
+	out.FromMe = fromMe != 0
+	return out, nil
 }
 
 func (d *DB) GetMediaDownloadInfo(chatJID, msgID string) (MediaDownloadInfo, error) {

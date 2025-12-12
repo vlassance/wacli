@@ -239,6 +239,57 @@ func TestContactsAliasTagsAndSearch(t *testing.T) {
 	}
 }
 
+func TestCountMessagesAndOldestMessageInfo(t *testing.T) {
+	db := openTestDB(t)
+
+	chat := "123@s.whatsapp.net"
+	if err := db.UpsertChat(chat, "dm", "Alice", time.Now()); err != nil {
+		t.Fatalf("UpsertChat: %v", err)
+	}
+
+	if n, err := db.CountMessages(); err != nil || n != 0 {
+		t.Fatalf("CountMessages expected 0, got %d (err=%v)", n, err)
+	}
+
+	base := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+	_ = db.UpsertMessage(UpsertMessageParams{
+		ChatJID:    chat,
+		MsgID:      "m2",
+		Timestamp:  base.Add(2 * time.Second),
+		FromMe:     true,
+		SenderJID:  chat,
+		SenderName: "Alice",
+		Text:       "second",
+	})
+	_ = db.UpsertMessage(UpsertMessageParams{
+		ChatJID:    chat,
+		MsgID:      "m1",
+		Timestamp:  base.Add(1 * time.Second),
+		FromMe:     false,
+		SenderJID:  chat,
+		SenderName: "Alice",
+		Text:       "first",
+	})
+
+	oldest, err := db.GetOldestMessageInfo(chat)
+	if err != nil {
+		t.Fatalf("GetOldestMessageInfo: %v", err)
+	}
+	if oldest.MsgID != "m1" {
+		t.Fatalf("expected oldest m1, got %q", oldest.MsgID)
+	}
+	if !oldest.Timestamp.Equal(base.Add(1 * time.Second)) {
+		t.Fatalf("unexpected oldest timestamp: %s", oldest.Timestamp)
+	}
+	if oldest.FromMe {
+		t.Fatalf("expected oldest.FromMe=false")
+	}
+
+	if n, err := db.CountMessages(); err != nil || n != 2 {
+		t.Fatalf("CountMessages expected 2, got %d (err=%v)", n, err)
+	}
+}
+
 func TestGroupsUpsertListAndParticipantsReplace(t *testing.T) {
 	db := openTestDB(t)
 

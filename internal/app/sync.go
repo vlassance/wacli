@@ -26,6 +26,7 @@ type SyncOptions struct {
 	Mode            SyncMode
 	AllowQR         bool
 	OnQRCode        func(string)
+	AfterConnect    func(context.Context) error
 	DownloadMedia   bool
 	RefreshContacts bool
 	RefreshGroups   bool
@@ -150,6 +151,11 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 	}
 	if opts.RefreshGroups {
 		_ = a.refreshGroups(ctx)
+	}
+	if opts.AfterConnect != nil {
+		if err := opts.AfterConnect(ctx); err != nil {
+			return SyncResult{MessagesStored: messagesStored.Load()}, err
+		}
 	}
 
 	if opts.Mode == SyncModeFollow {
