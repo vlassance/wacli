@@ -119,6 +119,7 @@ func (d *DB) ensureSchema() error {
 			ts INTEGER NOT NULL,
 			from_me INTEGER NOT NULL,
 			text TEXT,
+			display_text TEXT,
 			media_type TEXT,
 			media_caption TEXT,
 			filename TEXT,
@@ -140,18 +141,66 @@ func (d *DB) ensureSchema() error {
 		return fmt.Errorf("create tables: %w", err)
 	}
 
-	if _, err := d.sql.Exec(`
-		CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-			text,
-			media_caption,
-			filename,
-			chat_name,
-			sender_name
-		);
-	`); err != nil {
-		// Continue without FTS (fallback to LIKE).
-		d.ftsEnabled = false
+	if err := d.ensureMessageColumns(); err != nil {
+		return err
+	}
+
+	if err := d.ensureMessagesFTS(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *DB) ensureMessageColumns() error {
+	ok, err := d.tableHasColumn("messages", "display_text")
+	if err != nil {
+		return err
+	}
+	if ok {
 		return nil
+	}
+	if _, err := d.sql.Exec(`ALTER TABLE messages ADD COLUMN display_text TEXT`); err != nil {
+		return fmt.Errorf("add display_text column: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) ensureMessagesFTS() error {
+	ftsExists, err := d.tableExists("messages_fts")
+	if err != nil {
+		return err
+	}
+	if ftsExists {
+		hasDisplay, err := d.tableHasColumn("messages_fts", "display_text")
+		if err != nil {
+			return err
+		}
+		if !hasDisplay {
+			if _, err := d.sql.Exec(`DROP TABLE IF EXISTS messages_fts`); err != nil {
+				return fmt.Errorf("drop messages_fts: %w", err)
+			}
+			ftsExists = false
+		}
+	}
+
+	created := false
+	if !ftsExists {
+		if _, err := d.sql.Exec(`
+			CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+				text,
+				media_caption,
+				filename,
+				chat_name,
+				sender_name,
+				display_text
+			);
+		`); err != nil {
+			// Continue without FTS (fallback to LIKE).
+			d.ftsEnabled = false
+			return nil
+		}
+		created = true
 	}
 
 	// Ensure triggers match our expected semantics (FTS5 supports DELETE directly).
@@ -161,8 +210,8 @@ func (d *DB) ensureSchema() error {
 		DROP TRIGGER IF EXISTS messages_au;
 
 		CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
-			INSERT INTO messages_fts(rowid, text, media_caption, filename, chat_name, sender_name)
-			VALUES (new.rowid, COALESCE(new.text,''), COALESCE(new.media_caption,''), COALESCE(new.filename,''), COALESCE(new.chat_name,''), COALESCE(new.sender_name,''));
+			INSERT INTO messages_fts(rowid, text, media_caption, filename, chat_name, sender_name, display_text)
+			VALUES (new.rowid, COALESCE(new.text,''), COALESCE(new.media_caption,''), COALESCE(new.filename,''), COALESCE(new.chat_name,''), COALESCE(new.sender_name,''), COALESCE(new.display_text,''));
 		END;
 
 		CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
@@ -171,16 +220,68 @@ func (d *DB) ensureSchema() error {
 
 		CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
 			DELETE FROM messages_fts WHERE rowid = old.rowid;
-			INSERT INTO messages_fts(rowid, text, media_caption, filename, chat_name, sender_name)
-			VALUES (new.rowid, COALESCE(new.text,''), COALESCE(new.media_caption,''), COALESCE(new.filename,''), COALESCE(new.chat_name,''), COALESCE(new.sender_name,''));
+			INSERT INTO messages_fts(rowid, text, media_caption, filename, chat_name, sender_name, display_text)
+			VALUES (new.rowid, COALESCE(new.text,''), COALESCE(new.media_caption,''), COALESCE(new.filename,''), COALESCE(new.chat_name,''), COALESCE(new.sender_name,''), COALESCE(new.display_text,''));
 		END;
 	`); err != nil {
 		d.ftsEnabled = false
 		return nil
 	}
 
+	if created {
+		if _, err := d.sql.Exec(`
+			INSERT INTO messages_fts(rowid, text, media_caption, filename, chat_name, sender_name, display_text)
+			SELECT rowid,
+			       COALESCE(text,''),
+			       COALESCE(media_caption,''),
+			       COALESCE(filename,''),
+			       COALESCE(chat_name,''),
+			       COALESCE(sender_name,''),
+			       COALESCE(display_text,'')
+			FROM messages;
+		`); err != nil {
+			d.ftsEnabled = false
+			return nil
+		}
+	}
+
 	d.ftsEnabled = true
 	return nil
+}
+
+func (d *DB) tableExists(table string) (bool, error) {
+	row := d.sql.QueryRow(`SELECT 1 FROM sqlite_master WHERE name = ? AND type IN ('table','view')`, table)
+	var one int
+	if err := row.Scan(&one); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (d *DB) tableHasColumn(table, column string) (bool, error) {
+	rows, err := d.sql.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var colType string
+		var notNull int
+		var pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(name, column) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // --- domain types + helpers
@@ -224,15 +325,16 @@ type MediaDownloadInfo struct {
 }
 
 type Message struct {
-	ChatJID   string
-	ChatName  string
-	MsgID     string
-	SenderJID string
-	Timestamp time.Time
-	FromMe    bool
-	Text      string
-	MediaType string
-	Snippet   string
+	ChatJID     string
+	ChatName    string
+	MsgID       string
+	SenderJID   string
+	Timestamp   time.Time
+	FromMe      bool
+	Text        string
+	DisplayText string
+	MediaType   string
+	Snippet     string
 }
 
 type MessageInfo struct {
@@ -298,6 +400,7 @@ type UpsertMessageParams struct {
 	Timestamp     time.Time
 	FromMe        bool
 	Text          string
+	DisplayText   string
 	MediaType     string
 	MediaCaption  string
 	Filename      string
@@ -312,10 +415,10 @@ type UpsertMessageParams struct {
 func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 	_, err := d.sql.Exec(`
 		INSERT INTO messages(
-			chat_jid, chat_name, msg_id, sender_jid, sender_name, ts, from_me, text,
+			chat_jid, chat_name, msg_id, sender_jid, sender_name, ts, from_me, text, display_text,
 			media_type, media_caption, filename, mime_type, direct_path,
 			media_key, file_sha256, file_enc_sha256, file_length
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(chat_jid, msg_id) DO UPDATE SET
 			chat_name=COALESCE(NULLIF(excluded.chat_name,''), messages.chat_name),
 			sender_jid=excluded.sender_jid,
@@ -323,6 +426,7 @@ func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 			ts=excluded.ts,
 			from_me=excluded.from_me,
 			text=excluded.text,
+			display_text=CASE WHEN excluded.display_text IS NOT NULL AND excluded.display_text != '' THEN excluded.display_text ELSE messages.display_text END,
 			media_type=excluded.media_type,
 			media_caption=excluded.media_caption,
 			filename=COALESCE(NULLIF(excluded.filename,''), messages.filename),
@@ -332,7 +436,7 @@ func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 			file_sha256=CASE WHEN excluded.file_sha256 IS NOT NULL AND length(excluded.file_sha256)>0 THEN excluded.file_sha256 ELSE messages.file_sha256 END,
 			file_enc_sha256=CASE WHEN excluded.file_enc_sha256 IS NOT NULL AND length(excluded.file_enc_sha256)>0 THEN excluded.file_enc_sha256 ELSE messages.file_enc_sha256 END,
 			file_length=CASE WHEN excluded.file_length>0 THEN excluded.file_length ELSE messages.file_length END
-	`, p.ChatJID, nullIfEmpty(p.ChatName), p.MsgID, nullIfEmpty(p.SenderJID), nullIfEmpty(p.SenderName), unix(p.Timestamp), boolToInt(p.FromMe), nullIfEmpty(p.Text),
+	`, p.ChatJID, nullIfEmpty(p.ChatName), p.MsgID, nullIfEmpty(p.SenderJID), nullIfEmpty(p.SenderName), unix(p.Timestamp), boolToInt(p.FromMe), nullIfEmpty(p.Text), nullIfEmpty(p.DisplayText),
 		nullIfEmpty(p.MediaType), nullIfEmpty(p.MediaCaption), nullIfEmpty(p.Filename), nullIfEmpty(p.MimeType), nullIfEmpty(p.DirectPath),
 		p.MediaKey, p.FileSHA256, p.FileEncSHA256, int64(p.FileLength),
 	)
@@ -359,7 +463,7 @@ func (d *DB) ListMessages(p ListMessagesParams) ([]Message, error) {
 		p.Limit = 50
 	}
 	query := `
-		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.media_type,'')
+		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.display_text,''), COALESCE(m.media_type,'')
 		FROM messages m
 		LEFT JOIN chats c ON c.jid = m.chat_jid
 		WHERE 1=1`
@@ -390,7 +494,7 @@ func (d *DB) ListMessages(p ListMessagesParams) ([]Message, error) {
 		var m Message
 		var ts int64
 		var fromMe int
-		if err := rows.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.MediaType); err != nil {
+		if err := rows.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.DisplayText, &m.MediaType); err != nil {
 			return nil, err
 		}
 		m.Timestamp = fromUnix(ts)
@@ -426,12 +530,12 @@ func (d *DB) SearchMessages(p SearchMessagesParams) ([]Message, error) {
 
 func (d *DB) searchLIKE(p SearchMessagesParams) ([]Message, error) {
 	query := `
-		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.media_type,''), ''
+		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.display_text,''), COALESCE(m.media_type,''), ''
 		FROM messages m
 		LEFT JOIN chats c ON c.jid = m.chat_jid
-		WHERE (LOWER(m.text) LIKE LOWER(?) OR LOWER(m.media_caption) LIKE LOWER(?) OR LOWER(m.filename) LIKE LOWER(?) OR LOWER(COALESCE(m.chat_name,'')) LIKE LOWER(?) OR LOWER(COALESCE(m.sender_name,'')) LIKE LOWER(?) OR LOWER(COALESCE(c.name,'')) LIKE LOWER(?))`
+		WHERE (LOWER(m.text) LIKE LOWER(?) OR LOWER(m.display_text) LIKE LOWER(?) OR LOWER(m.media_caption) LIKE LOWER(?) OR LOWER(m.filename) LIKE LOWER(?) OR LOWER(COALESCE(m.chat_name,'')) LIKE LOWER(?) OR LOWER(COALESCE(m.sender_name,'')) LIKE LOWER(?) OR LOWER(COALESCE(c.name,'')) LIKE LOWER(?))`
 	needle := "%" + p.Query + "%"
-	args := []interface{}{needle, needle, needle, needle, needle, needle}
+	args := []interface{}{needle, needle, needle, needle, needle, needle, needle}
 	query, args = applyMessageFilters(query, args, p)
 	query += " ORDER BY m.ts DESC LIMIT ?"
 	args = append(args, p.Limit)
@@ -440,7 +544,7 @@ func (d *DB) searchLIKE(p SearchMessagesParams) ([]Message, error) {
 
 func (d *DB) searchFTS(p SearchMessagesParams) ([]Message, error) {
 	query := `
-		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.media_type,''),
+		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.display_text,''), COALESCE(m.media_type,''),
 		       snippet(messages_fts, 0, '[', ']', '…', 12)
 		FROM messages_fts
 		JOIN messages m ON messages_fts.rowid = m.rowid
@@ -489,7 +593,7 @@ func (d *DB) scanMessages(query string, args ...interface{}) ([]Message, error) 
 		var m Message
 		var ts int64
 		var fromMe int
-		if err := rows.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.MediaType, &m.Snippet); err != nil {
+		if err := rows.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.DisplayText, &m.MediaType, &m.Snippet); err != nil {
 			return nil, err
 		}
 		m.Timestamp = fromUnix(ts)
@@ -501,7 +605,7 @@ func (d *DB) scanMessages(query string, args ...interface{}) ([]Message, error) 
 
 func (d *DB) GetMessage(chatJID, msgID string) (Message, error) {
 	row := d.sql.QueryRow(`
-		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.media_type,'')
+		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.display_text,''), COALESCE(m.media_type,'')
 		FROM messages m
 		LEFT JOIN chats c ON c.jid = m.chat_jid
 		WHERE m.chat_jid = ? AND m.msg_id = ?
@@ -509,7 +613,7 @@ func (d *DB) GetMessage(chatJID, msgID string) (Message, error) {
 	var m Message
 	var ts int64
 	var fromMe int
-	if err := row.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.MediaType); err != nil {
+	if err := row.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.DisplayText, &m.MediaType); err != nil {
 		return Message{}, err
 	}
 	m.Timestamp = fromUnix(ts)
@@ -618,7 +722,7 @@ func (d *DB) MessageContext(chatJID, msgID string, before, after int) ([]Message
 	}
 
 	beforeRows, err := d.sql.Query(`
-		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.media_type,''), ''
+		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.display_text,''), COALESCE(m.media_type,''), ''
 		FROM messages m
 		LEFT JOIN chats c ON c.jid = m.chat_jid
 		WHERE m.chat_jid = ? AND m.ts < ?
@@ -635,7 +739,7 @@ func (d *DB) MessageContext(chatJID, msgID string, before, after int) ([]Message
 		var m Message
 		var ts int64
 		var fromMe int
-		if err := beforeRows.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.MediaType, &m.Snippet); err != nil {
+		if err := beforeRows.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.DisplayText, &m.MediaType, &m.Snippet); err != nil {
 			return nil, err
 		}
 		m.Timestamp = fromUnix(ts)
@@ -647,7 +751,7 @@ func (d *DB) MessageContext(chatJID, msgID string, before, after int) ([]Message
 	}
 
 	afterRows, err := d.sql.Query(`
-		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.media_type,''), ''
+		SELECT m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.display_text,''), COALESCE(m.media_type,''), ''
 		FROM messages m
 		LEFT JOIN chats c ON c.jid = m.chat_jid
 		WHERE m.chat_jid = ? AND m.ts > ?
@@ -664,7 +768,7 @@ func (d *DB) MessageContext(chatJID, msgID string, before, after int) ([]Message
 		var m Message
 		var ts int64
 		var fromMe int
-		if err := afterRows.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.MediaType, &m.Snippet); err != nil {
+		if err := afterRows.Scan(&m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &ts, &fromMe, &m.Text, &m.DisplayText, &m.MediaType, &m.Snippet); err != nil {
 			return nil, err
 		}
 		m.Timestamp = fromUnix(ts)

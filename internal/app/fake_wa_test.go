@@ -216,6 +216,10 @@ func (f *fakeWA) Upload(ctx context.Context, data []byte, mediaType whatsmeow.Me
 	return whatsmeow.UploadResponse{}, nil
 }
 
+func (f *fakeWA) DecryptReaction(ctx context.Context, reaction *events.Message) (*waProto.ReactionMessage, error) {
+	return nil, fmt.Errorf("not supported")
+}
+
 func (f *fakeWA) DownloadMediaToFile(ctx context.Context, directPath string, encFileHash, fileHash, mediaKey []byte, fileLength uint64, mediaType, mmsType string, targetPath string) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
 		return 0, err

@@ -14,6 +14,7 @@ import (
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
@@ -204,6 +205,16 @@ func (c *Client) Upload(ctx context.Context, data []byte, mediaType whatsmeow.Me
 		return whatsmeow.UploadResponse{}, fmt.Errorf("not connected")
 	}
 	return cli.Upload(ctx, data, mediaType)
+}
+
+func (c *Client) DecryptReaction(ctx context.Context, reaction *events.Message) (*waProto.ReactionMessage, error) {
+	c.mu.Lock()
+	cli := c.client
+	c.mu.Unlock()
+	if cli == nil || !cli.IsConnected() {
+		return nil, fmt.Errorf("not connected")
+	}
+	return cli.DecryptReaction(ctx, reaction)
 }
 
 func (c *Client) RequestHistorySyncOnDemand(ctx context.Context, lastKnown types.MessageInfo, count int) (types.MessageID, error) {

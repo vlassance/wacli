@@ -85,6 +85,16 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 		switch v := evt.(type) {
 		case *events.Message:
 			pm := wa.ParseLiveMessage(v)
+			if pm.ReactionToID != "" && pm.ReactionEmoji == "" && v.Message != nil && v.Message.GetEncReactionMessage() != nil {
+				if reaction, err := a.wa.DecryptReaction(ctx, v); err == nil && reaction != nil {
+					pm.ReactionEmoji = reaction.GetText()
+					if pm.ReactionToID == "" {
+						if key := reaction.GetKey(); key != nil {
+							pm.ReactionToID = key.GetID()
+						}
+					}
+				}
+			}
 			if err := a.storeParsedMessage(ctx, pm); err == nil {
 				messagesStored.Add(1)
 			}
@@ -295,6 +305,8 @@ func (a *App) storeParsedMessage(ctx context.Context, pm wa.ParsedMessage) error
 		fileLen = pm.Media.FileLength
 	}
 
+	displayText := a.buildDisplayText(ctx, pm)
+
 	return a.db.UpsertMessage(store.UpsertMessageParams{
 		ChatJID:       chatJID,
 		ChatName:      chatName,
@@ -304,6 +316,7 @@ func (a *App) storeParsedMessage(ctx context.Context, pm wa.ParsedMessage) error
 		Timestamp:     pm.Timestamp,
 		FromMe:        pm.FromMe,
 		Text:          pm.Text,
+		DisplayText:   displayText,
 		MediaType:     mediaType,
 		MediaCaption:  caption,
 		Filename:      filename,
@@ -314,4 +327,101 @@ func (a *App) storeParsedMessage(ctx context.Context, pm wa.ParsedMessage) error
 		FileEncSHA256: fileEncSha,
 		FileLength:    fileLen,
 	})
+}
+
+func (a *App) buildDisplayText(ctx context.Context, pm wa.ParsedMessage) string {
+	base := baseDisplayText(pm)
+
+	if pm.ReactionToID != "" || strings.TrimSpace(pm.ReactionEmoji) != "" {
+		target := strings.TrimSpace(pm.ReactionToID)
+		display := ""
+		if target != "" {
+			display = a.lookupMessageDisplayText(pm.Chat.String(), target)
+		}
+		if display == "" {
+			display = "message"
+		}
+		emoji := strings.TrimSpace(pm.ReactionEmoji)
+		if emoji != "" {
+			return fmt.Sprintf("Reacted %s to %s", emoji, display)
+		}
+		return fmt.Sprintf("Reacted to %s", display)
+	}
+
+	if pm.ReplyToID != "" {
+		quoted := strings.TrimSpace(pm.ReplyToDisplay)
+		if quoted == "" {
+			quoted = a.lookupMessageDisplayText(pm.Chat.String(), pm.ReplyToID)
+		}
+		if quoted == "" {
+			quoted = "message"
+		}
+		if base == "" {
+			base = "(message)"
+		}
+		return fmt.Sprintf("> %s\n%s", quoted, base)
+	}
+
+	if base == "" {
+		base = "(message)"
+	}
+	return base
+}
+
+func baseDisplayText(pm wa.ParsedMessage) string {
+	if pm.Media != nil {
+		return "Sent " + mediaLabel(pm.Media.Type)
+	}
+	if text := strings.TrimSpace(pm.Text); text != "" {
+		return text
+	}
+	return ""
+}
+
+func (a *App) lookupMessageDisplayText(chatJID, msgID string) string {
+	if strings.TrimSpace(chatJID) == "" || strings.TrimSpace(msgID) == "" {
+		return ""
+	}
+	msg, err := a.db.GetMessage(chatJID, msgID)
+	if err != nil {
+		return ""
+	}
+	if text := strings.TrimSpace(msg.DisplayText); text != "" {
+		return text
+	}
+	if text := strings.TrimSpace(msg.Text); text != "" {
+		return text
+	}
+	if strings.TrimSpace(msg.MediaType) != "" {
+		return "Sent " + mediaLabel(msg.MediaType)
+	}
+	return ""
+}
+
+func mediaLabel(mediaType string) string {
+	mt := strings.ToLower(strings.TrimSpace(mediaType))
+	switch mt {
+	case "gif":
+		return "gif"
+	case "image":
+		return "image"
+	case "video":
+		return "video"
+	case "audio":
+		return "audio"
+	case "sticker":
+		return "sticker"
+	case "document":
+		return "document"
+	case "location":
+		return "location"
+	case "contact":
+		return "contact"
+	case "contacts":
+		return "contacts"
+	case "":
+		return "message"
+	default:
+		return mt
+	}
 }

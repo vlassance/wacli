@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -88,9 +89,12 @@ func newMessagesListCmd(flags *rootFlags) *cobra.Command {
 				if chatLabel == "" {
 					chatLabel = m.ChatJID
 				}
-				text := m.Text
+				text := strings.TrimSpace(m.DisplayText)
+				if text == "" {
+					text = strings.TrimSpace(m.Text)
+				}
 				if m.MediaType != "" && text == "" {
-					text = "[" + m.MediaType + "]"
+					text = "Sent " + m.MediaType
 				}
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 					m.Timestamp.Local().Format("2006-01-02 15:04:05"),
@@ -183,6 +187,9 @@ func newMessagesSearchCmd(flags *rootFlags) *cobra.Command {
 					chatLabel = m.ChatJID
 				}
 				match := m.Snippet
+				if match == "" {
+					match = strings.TrimSpace(m.DisplayText)
+				}
 				if match == "" {
 					match = m.Text
 				}

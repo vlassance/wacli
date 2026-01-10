@@ -25,6 +25,7 @@ func TestOpenCreatesExpectedSchema(t *testing.T) {
 	for _, want := range []string{
 		"chat_name",
 		"sender_name",
+		"display_text",
 		"local_path",
 		"downloaded_at",
 	} {

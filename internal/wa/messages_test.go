@@ -74,3 +74,69 @@ func TestParseLiveMessageImageClonesBytes(t *testing.T) {
 		t.Fatalf("expected MediaKey to be cloned")
 	}
 }
+
+func TestParseLiveMessageReaction(t *testing.T) {
+	chat, _ := types.ParseJID("123@s.whatsapp.net")
+	sender, _ := types.ParseJID("sender@s.whatsapp.net")
+
+	ev := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     chat,
+				Sender:   sender,
+				IsFromMe: false,
+			},
+			ID:        "mid",
+			Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			PushName:  "Sender",
+		},
+		Message: &waProto.Message{
+			ReactionMessage: &waProto.ReactionMessage{
+				Text: proto.String("👍"),
+				Key:  &waProto.MessageKey{ID: proto.String("orig")},
+			},
+		},
+	}
+
+	pm := ParseLiveMessage(ev)
+	if pm.ReactionEmoji != "👍" || pm.ReactionToID != "orig" {
+		t.Fatalf("unexpected reaction parse: %+v", pm)
+	}
+}
+
+func TestParseLiveMessageReply(t *testing.T) {
+	chat, _ := types.ParseJID("123@s.whatsapp.net")
+	sender, _ := types.ParseJID("sender@s.whatsapp.net")
+
+	ev := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     chat,
+				Sender:   sender,
+				IsFromMe: false,
+			},
+			ID:        "mid",
+			Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			PushName:  "Sender",
+		},
+		Message: &waProto.Message{
+			ExtendedTextMessage: &waProto.ExtendedTextMessage{
+				Text: proto.String("reply text"),
+				ContextInfo: &waProto.ContextInfo{
+					StanzaID: proto.String("orig"),
+					QuotedMessage: &waProto.Message{
+						Conversation: proto.String("quoted"),
+					},
+				},
+			},
+		},
+	}
+
+	pm := ParseLiveMessage(ev)
+	if pm.ReplyToID != "orig" {
+		t.Fatalf("expected ReplyToID to be orig, got %q", pm.ReplyToID)
+	}
+	if pm.ReplyToDisplay != "quoted" {
+		t.Fatalf("expected ReplyToDisplay to be quoted, got %q", pm.ReplyToDisplay)
+	}
+}

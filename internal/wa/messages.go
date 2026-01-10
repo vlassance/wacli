@@ -22,14 +22,18 @@ type Media struct {
 }
 
 type ParsedMessage struct {
-	Chat      types.JID
-	ID        string
-	SenderJID string
-	Timestamp time.Time
-	FromMe    bool
-	Text      string
-	Media     *Media
-	PushName  string
+	Chat           types.JID
+	ID             string
+	SenderJID      string
+	Timestamp      time.Time
+	FromMe         bool
+	Text           string
+	Media          *Media
+	PushName       string
+	ReplyToID      string
+	ReplyToDisplay string
+	ReactionToID   string
+	ReactionEmoji  string
 }
 
 func ParseLiveMessage(evt *events.Message) ParsedMessage {
@@ -78,6 +82,17 @@ func extractWAProto(m *waProto.Message, pm *ParsedMessage) {
 		return
 	}
 
+	if reaction := m.GetReactionMessage(); reaction != nil {
+		pm.ReactionEmoji = reaction.GetText()
+		if key := reaction.GetKey(); key != nil {
+			pm.ReactionToID = key.GetID()
+		}
+	} else if encReaction := m.GetEncReactionMessage(); encReaction != nil {
+		if key := encReaction.GetTargetMessageKey(); key != nil {
+			pm.ReactionToID = key.GetID()
+		}
+	}
+
 	switch {
 	case m.GetConversation() != "":
 		pm.Text = m.GetConversation()
@@ -99,15 +114,18 @@ func extractWAProto(m *waProto.Message, pm *ParsedMessage) {
 			FileEncSHA256: clone(img.GetFileEncSHA256()),
 			FileLength:    img.GetFileLength(),
 		}
-		return
 	}
 
 	if vid := m.GetVideoMessage(); vid != nil {
 		if pm.Text == "" {
 			pm.Text = vid.GetCaption()
 		}
+		mediaType := "video"
+		if vid.GetGifPlayback() {
+			mediaType = "gif"
+		}
 		pm.Media = &Media{
-			Type:          "video",
+			Type:          mediaType,
 			Caption:       vid.GetCaption(),
 			MimeType:      vid.GetMimetype(),
 			DirectPath:    vid.GetDirectPath(),
@@ -116,7 +134,6 @@ func extractWAProto(m *waProto.Message, pm *ParsedMessage) {
 			FileEncSHA256: clone(vid.GetFileEncSHA256()),
 			FileLength:    vid.GetFileLength(),
 		}
-		return
 	}
 
 	if aud := m.GetAudioMessage(); aud != nil {
@@ -133,7 +150,6 @@ func extractWAProto(m *waProto.Message, pm *ParsedMessage) {
 			FileEncSHA256: clone(aud.GetFileEncSHA256()),
 			FileLength:    aud.GetFileLength(),
 		}
-		return
 	}
 
 	if doc := m.GetDocumentMessage(); doc != nil {
@@ -151,7 +167,27 @@ func extractWAProto(m *waProto.Message, pm *ParsedMessage) {
 			FileEncSHA256: clone(doc.GetFileEncSHA256()),
 			FileLength:    doc.GetFileLength(),
 		}
-		return
+	}
+
+	if sticker := m.GetStickerMessage(); sticker != nil {
+		pm.Media = &Media{
+			Type:          "sticker",
+			MimeType:      sticker.GetMimetype(),
+			DirectPath:    sticker.GetDirectPath(),
+			MediaKey:      clone(sticker.GetMediaKey()),
+			FileSHA256:    clone(sticker.GetFileSHA256()),
+			FileEncSHA256: clone(sticker.GetFileEncSHA256()),
+			FileLength:    sticker.GetFileLength(),
+		}
+	}
+
+	if ctx := contextInfoForMessage(m); ctx != nil {
+		if id := strings.TrimSpace(ctx.GetStanzaID()); id != "" {
+			pm.ReplyToID = id
+		}
+		if quoted := ctx.GetQuotedMessage(); quoted != nil {
+			pm.ReplyToDisplay = strings.TrimSpace(displayTextForProto(quoted))
+		}
 	}
 }
 
@@ -162,4 +198,82 @@ func clone(b []byte) []byte {
 	out := make([]byte, len(b))
 	copy(out, b)
 	return out
+}
+
+func contextInfoForMessage(m *waProto.Message) *waProto.ContextInfo {
+	if m == nil {
+		return nil
+	}
+	if ext := m.GetExtendedTextMessage(); ext != nil {
+		return ext.GetContextInfo()
+	}
+	if img := m.GetImageMessage(); img != nil {
+		return img.GetContextInfo()
+	}
+	if vid := m.GetVideoMessage(); vid != nil {
+		return vid.GetContextInfo()
+	}
+	if aud := m.GetAudioMessage(); aud != nil {
+		return aud.GetContextInfo()
+	}
+	if doc := m.GetDocumentMessage(); doc != nil {
+		return doc.GetContextInfo()
+	}
+	if sticker := m.GetStickerMessage(); sticker != nil {
+		return sticker.GetContextInfo()
+	}
+	if loc := m.GetLocationMessage(); loc != nil {
+		return loc.GetContextInfo()
+	}
+	if contact := m.GetContactMessage(); contact != nil {
+		return contact.GetContextInfo()
+	}
+	if contacts := m.GetContactsArrayMessage(); contacts != nil {
+		return contacts.GetContextInfo()
+	}
+	return nil
+}
+
+func displayTextForProto(m *waProto.Message) string {
+	if m == nil {
+		return ""
+	}
+
+	if img := m.GetImageMessage(); img != nil {
+		return "Sent image"
+	}
+	if vid := m.GetVideoMessage(); vid != nil {
+		if vid.GetGifPlayback() {
+			return "Sent gif"
+		}
+		return "Sent video"
+	}
+	if aud := m.GetAudioMessage(); aud != nil {
+		return "Sent audio"
+	}
+	if doc := m.GetDocumentMessage(); doc != nil {
+		return "Sent document"
+	}
+	if sticker := m.GetStickerMessage(); sticker != nil {
+		return "Sent sticker"
+	}
+	if loc := m.GetLocationMessage(); loc != nil {
+		return "Sent location"
+	}
+	if contact := m.GetContactMessage(); contact != nil {
+		return "Sent contact"
+	}
+	if contacts := m.GetContactsArrayMessage(); contacts != nil {
+		return "Sent contacts"
+	}
+
+	if text := strings.TrimSpace(m.GetConversation()); text != "" {
+		return text
+	}
+	if ext := m.GetExtendedTextMessage(); ext != nil {
+		if text := strings.TrimSpace(ext.GetText()); text != "" {
+			return text
+		}
+	}
+	return ""
 }
