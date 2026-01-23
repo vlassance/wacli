@@ -6,6 +6,7 @@
 
 - Start tracking changes for the next release (from 2026-01-23).
 - Send: `wacli send file --filename` to override display name for uploads. (#7 — thanks @plattenschieber)
+- Auth: allow optional `WACLI_DEVICE_LABEL` and `WACLI_DEVICE_PLATFORM` overrides for linked device identity. (#4 — thanks @zats)
 
 ### Fixed
 

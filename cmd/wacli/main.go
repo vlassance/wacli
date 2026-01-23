@@ -18,8 +18,11 @@ func main() {
 
 func applyDeviceLabel() {
 	label := strings.TrimSpace(os.Getenv("WACLI_DEVICE_LABEL"))
-	platform := parsePlatformType(os.Getenv("WACLI_DEVICE_PLATFORM"))
-	store.DeviceProps.PlatformType = platform.Enum()
+	platformRaw := strings.TrimSpace(os.Getenv("WACLI_DEVICE_PLATFORM"))
+	if platformRaw != "" {
+		platform := parsePlatformType(platformRaw)
+		store.DeviceProps.PlatformType = platform.Enum()
+	}
 	if label == "" {
 		return
 	}
