@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 - Unreleased
+## 0.5.0 - Unreleased
 
 ### Changed
 
@@ -14,11 +14,11 @@
 ### Docs
 
 - README: update usage/docs for the 0.2.0 release baseline.
-- Changelog: roll unreleased tracking from `0.2.1` to `0.3.0`.
+- Changelog: roll unreleased tracking from `0.2.1` to `0.5.0`.
 
 ### Chore
 
-- Version: bump CLI version string to `0.3.0` (unreleased).
+- Version: bump CLI version string to `0.5.0` (unreleased).
 
 ## 0.2.0 - 2026-01-23
 
