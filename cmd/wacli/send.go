@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steipete/wacli/internal/app"
+	"github.com/steipete/wacli/internal/config"
 	"github.com/steipete/wacli/internal/out"
 	"github.com/steipete/wacli/internal/store"
 	"github.com/steipete/wacli/internal/wa"
@@ -34,6 +40,28 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 				return fmt.Errorf("--to and --message are required")
 			}
 
+			// Resolve store dir for socket path.
+			storeDir := flags.storeDir
+			if storeDir == "" {
+				storeDir = config.DefaultStoreDir()
+			}
+			storeDir, _ = filepath.Abs(storeDir)
+
+			// Try sending through the running sync process's socket first.
+			sockPath := app.SendSocketPath(storeDir)
+			if resp, err := trySendViaSocket(sockPath, to, message); err == nil {
+				if flags.asJSON {
+					return out.WriteJSON(os.Stdout, map[string]any{
+						"sent": true,
+						"to":   resp.To,
+						"id":   resp.ID,
+					})
+				}
+				fmt.Fprintf(os.Stdout, "Sent to %s (id %s)\n", resp.To, resp.ID)
+				return nil
+			}
+
+			// Fall back to direct connection (sync not running).
 			ctx, cancel := withTimeout(context.Background(), flags)
 			defer cancel()
 
@@ -91,4 +119,39 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 	cmd.Flags().StringVar(&to, "to", "", "recipient phone number or JID")
 	cmd.Flags().StringVar(&message, "message", "", "message text")
 	return cmd
+}
+
+type socketResponse struct {
+	Success bool   `json:"success"`
+	ID      string `json:"id"`
+	To      string `json:"to"`
+	Error   string `json:"error"`
+}
+
+func trySendViaSocket(sockPath, to, message string) (*socketResponse, error) {
+	conn, err := net.DialTimeout("unix", sockPath, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	conn.SetDeadline(time.Now().Add(30 * time.Second))
+
+	req, _ := json.Marshal(map[string]string{"to": to, "message": message})
+	conn.Write(req)
+	conn.Write([]byte("\n"))
+
+	scanner := bufio.NewScanner(conn)
+	if !scanner.Scan() {
+		return nil, fmt.Errorf("no response from send server")
+	}
+
+	var resp socketResponse
+	if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("send server error: %s", resp.Error)
+	}
+	return &resp, nil
 }

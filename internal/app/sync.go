@@ -169,6 +169,14 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 	}
 
 	if opts.Mode == SyncModeFollow {
+		// Start send server so other processes can send through this connection.
+		cleanupSend, sendErr := a.StartSendServer(ctx)
+		if sendErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not start send server: %v\n", sendErr)
+		} else {
+			defer cleanupSend()
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
