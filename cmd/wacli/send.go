@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steipete/wacli/internal/out"
 	"github.com/steipete/wacli/internal/store"
 	"github.com/steipete/wacli/internal/wa"
+	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 func newSendCmd(flags *rootFlags) *cobra.Command {
@@ -25,6 +28,8 @@ func newSendCmd(flags *rootFlags) *cobra.Command {
 func newSendTextCmd(flags *rootFlags) *cobra.Command {
 	var to string
 	var message string
+	var replyTo string
+	var replyToParticipant string
 
 	cmd := &cobra.Command{
 		Use:   "text",
@@ -55,9 +60,34 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 				return err
 			}
 
-			msgID, err := a.WA().SendText(ctx, toJID, message)
-			if err != nil {
-				return err
+			var msgID string
+			if replyTo != "" {
+				// Resolve "self" to own JID.
+				participant := strings.TrimSpace(replyToParticipant)
+				if strings.EqualFold(participant, "self") {
+					participant = a.WA().GetOwnJID().String()
+				}
+
+				msg := &waProto.Message{
+					ExtendedTextMessage: &waProto.ExtendedTextMessage{
+						Text: proto.String(message),
+						ContextInfo: &waProto.ContextInfo{
+							StanzaID:    proto.String(replyTo),
+							Participant: proto.String(participant),
+						},
+					},
+				}
+				id, err := a.WA().SendProtoMessage(ctx, toJID, msg)
+				if err != nil {
+					return err
+				}
+				msgID = id
+			} else {
+				id, err := a.WA().SendText(ctx, toJID, message)
+				if err != nil {
+					return err
+				}
+				msgID = string(id)
 			}
 
 			now := time.Now().UTC()
@@ -68,7 +98,7 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 			_ = a.DB().UpsertMessage(store.UpsertMessageParams{
 				ChatJID:    chat.String(),
 				ChatName:   chatName,
-				MsgID:      string(msgID),
+				MsgID:      msgID,
 				SenderJID:  "",
 				SenderName: "me",
 				Timestamp:  now,
@@ -90,5 +120,7 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 
 	cmd.Flags().StringVar(&to, "to", "", "recipient phone number or JID")
 	cmd.Flags().StringVar(&message, "message", "", "message text")
+	cmd.Flags().StringVar(&replyTo, "reply-to", "", "message ID to reply to (stanza ID)")
+	cmd.Flags().StringVar(&replyToParticipant, "reply-to-participant", "", "JID of the sender of the quoted message (use 'self' for own messages)")
 	return cmd
 }

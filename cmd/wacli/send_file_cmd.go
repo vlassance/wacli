@@ -16,6 +16,8 @@ func newSendFileCmd(flags *rootFlags) *cobra.Command {
 	var filename string
 	var caption string
 	var mimeOverride string
+	var replyTo string
+	var replyToParticipant string
 
 	cmd := &cobra.Command{
 		Use:   "file",
@@ -46,7 +48,7 @@ func newSendFileCmd(flags *rootFlags) *cobra.Command {
 				return err
 			}
 
-			msgID, meta, err := sendFile(ctx, a, toJID, filePath, filename, caption, mimeOverride)
+			msgID, meta, err := sendFile(ctx, a, toJID, filePath, filename, caption, mimeOverride, replyTo, replyToParticipant)
 			if err != nil {
 				return err
 			}
@@ -69,5 +71,7 @@ func newSendFileCmd(flags *rootFlags) *cobra.Command {
 	cmd.Flags().StringVar(&filename, "filename", "", "display name for the file (defaults to basename of --file)")
 	cmd.Flags().StringVar(&caption, "caption", "", "caption (images/videos/documents)")
 	cmd.Flags().StringVar(&mimeOverride, "mime", "", "override detected mime type")
+	cmd.Flags().StringVar(&replyTo, "reply-to", "", "message ID to reply to (stanza ID)")
+	cmd.Flags().StringVar(&replyToParticipant, "reply-to-participant", "", "JID of the sender of the quoted message (use 'self' for own messages)")
 	return cmd
 }

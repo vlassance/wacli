@@ -168,6 +168,17 @@ func (c *Client) RemoveEventHandler(id uint32) {
 	cli.RemoveEventHandler(id)
 }
 
+// GetOwnJID returns the authenticated user's JID in non-AD form.
+func (c *Client) GetOwnJID() types.JID {
+	c.mu.Lock()
+	cli := c.client
+	c.mu.Unlock()
+	if cli == nil || cli.Store == nil || cli.Store.ID == nil {
+		return types.JID{}
+	}
+	return cli.Store.ID.ToNonAD()
+}
+
 func (c *Client) SendText(ctx context.Context, to types.JID, text string) (types.MessageID, error) {
 	c.mu.Lock()
 	cli := c.client

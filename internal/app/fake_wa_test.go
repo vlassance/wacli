@@ -204,6 +204,10 @@ func (f *fakeWA) JoinGroupWithLink(ctx context.Context, code string) (types.JID,
 
 func (f *fakeWA) LeaveGroup(ctx context.Context, group types.JID) error { return nil }
 
+func (f *fakeWA) GetOwnJID() types.JID {
+	return types.JID{User: "1234567890", Server: types.DefaultUserServer}
+}
+
 func (f *fakeWA) SendText(ctx context.Context, to types.JID, text string) (types.MessageID, error) {
 	return types.MessageID("msgid"), nil
 }

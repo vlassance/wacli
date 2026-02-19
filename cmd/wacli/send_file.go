@@ -20,7 +20,7 @@ import (
 func sendFile(ctx context.Context, a interface {
 	WA() app.WAClient
 	DB() *store.DB
-}, to types.JID, filePath, filename, caption, mimeOverride string) (string, map[string]string, error) {
+}, to types.JID, filePath, filename, caption, mimeOverride, replyTo, replyToParticipant string) (string, map[string]string, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", nil, err
@@ -62,6 +62,19 @@ func sendFile(ctx context.Context, a interface {
 		return "", nil, err
 	}
 
+	// Build reply context if replying to a message.
+	var ctxInfo *waProto.ContextInfo
+	if strings.TrimSpace(replyTo) != "" {
+		participant := strings.TrimSpace(replyToParticipant)
+		if strings.EqualFold(participant, "self") {
+			participant = a.WA().GetOwnJID().String()
+		}
+		ctxInfo = &waProto.ContextInfo{
+			StanzaID:    proto.String(replyTo),
+			Participant: proto.String(participant),
+		}
+	}
+
 	now := time.Now().UTC()
 	msg := &waProto.Message{}
 
@@ -76,6 +89,7 @@ func sendFile(ctx context.Context, a interface {
 			FileLength:    proto.Uint64(up.FileLength),
 			Mimetype:      proto.String(mimeType),
 			Caption:       proto.String(caption),
+			ContextInfo:   ctxInfo,
 		}
 	case "video":
 		msg.VideoMessage = &waProto.VideoMessage{
@@ -87,6 +101,7 @@ func sendFile(ctx context.Context, a interface {
 			FileLength:    proto.Uint64(up.FileLength),
 			Mimetype:      proto.String(mimeType),
 			Caption:       proto.String(caption),
+			ContextInfo:   ctxInfo,
 		}
 	case "audio":
 		msg.AudioMessage = &waProto.AudioMessage{
@@ -98,6 +113,7 @@ func sendFile(ctx context.Context, a interface {
 			FileLength:    proto.Uint64(up.FileLength),
 			Mimetype:      proto.String(mimeType),
 			PTT:           proto.Bool(false),
+			ContextInfo:   ctxInfo,
 		}
 	default:
 		msg.DocumentMessage = &waProto.DocumentMessage{
@@ -111,6 +127,7 @@ func sendFile(ctx context.Context, a interface {
 			FileName:      proto.String(name),
 			Caption:       proto.String(caption),
 			Title:         proto.String(name),
+			ContextInfo:   ctxInfo,
 		}
 	}
 
