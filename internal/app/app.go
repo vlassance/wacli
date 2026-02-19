@@ -26,6 +26,7 @@ type WAClient interface {
 	ReconnectWithBackoff(ctx context.Context, minDelay, maxDelay time.Duration) error
 
 	ResolveChatName(ctx context.Context, chat types.JID, pushName string) string
+	ResolveLIDToPN(ctx context.Context, jid types.JID) types.JID
 	GetContact(ctx context.Context, jid types.JID) (types.ContactInfo, error)
 	GetAllContacts(ctx context.Context) (map[types.JID]types.ContactInfo, error)
 

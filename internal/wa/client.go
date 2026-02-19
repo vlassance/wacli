@@ -349,6 +349,25 @@ func (c *Client) Logout(ctx context.Context) error {
 	return cli.Logout(ctx)
 }
 
+// ResolveLIDToPN resolves a LID (Linked Identity) JID to a Phone Number JID.
+// Returns the original JID unchanged if it's not a LID or if resolution fails.
+func (c *Client) ResolveLIDToPN(ctx context.Context, jid types.JID) types.JID {
+	if jid.Server != types.HiddenUserServer {
+		return jid
+	}
+	c.mu.Lock()
+	cli := c.client
+	c.mu.Unlock()
+	if cli == nil || cli.Store == nil || cli.Store.LIDs == nil {
+		return jid
+	}
+	pn, err := cli.Store.LIDs.GetPNForLID(ctx, jid.ToNonAD())
+	if err != nil || pn.IsEmpty() {
+		return jid
+	}
+	return pn
+}
+
 // Reconnect loop helper.
 func (c *Client) ReconnectWithBackoff(ctx context.Context, minDelay, maxDelay time.Duration) error {
 	delay := minDelay
