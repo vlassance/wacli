@@ -18,6 +18,7 @@ var schemaMigrations = []migration{
 	{version: 1, name: "core schema", up: migrateCoreSchema},
 	{version: 2, name: "messages display_text column", up: migrateMessagesDisplayText},
 	{version: 3, name: "messages fts", up: migrateMessagesFTS},
+	{version: 4, name: "messages edit and reaction columns", up: migrateMessagesEditReaction},
 }
 
 func (d *DB) ensureSchema() error {
@@ -247,6 +248,42 @@ func migrateMessagesFTS(d *DB) error {
 	}
 
 	d.ftsEnabled = true
+	return nil
+}
+
+func migrateMessagesEditReaction(d *DB) error {
+	cols := map[string]string{
+		"edit_type":      "TEXT",
+		"edit_target_id": "TEXT",
+		"updated_at":     "INTEGER",
+		"reaction_to_id": "TEXT",
+		"reaction_emoji":  "TEXT",
+	}
+	for col, typ := range cols {
+		has, err := d.tableHasColumn("messages", col)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := d.sql.Exec(fmt.Sprintf("ALTER TABLE messages ADD COLUMN %s %s", col, typ)); err != nil {
+				return fmt.Errorf("add %s column: %w", col, err)
+			}
+		}
+	}
+	// Backfill updated_at from ts for existing rows.
+	if _, err := d.sql.Exec(`UPDATE messages SET updated_at = ts WHERE updated_at IS NULL`); err != nil {
+		return fmt.Errorf("backfill updated_at: %w", err)
+	}
+	// Auto-update trigger for updated_at.
+	if _, err := d.sql.Exec(`
+		CREATE TRIGGER IF NOT EXISTS messages_updated_at
+		AFTER UPDATE ON messages
+		BEGIN
+			UPDATE messages SET updated_at = strftime('%%s','now') WHERE rowid = NEW.rowid;
+		END
+	`); err != nil {
+		return fmt.Errorf("create updated_at trigger: %w", err)
+	}
 	return nil
 }
 

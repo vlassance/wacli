@@ -34,6 +34,8 @@ type ParsedMessage struct {
 	ReplyToDisplay string
 	ReactionToID   string
 	ReactionEmoji  string
+	EditType       string
+	EditTargetID   string
 }
 
 func ParseLiveMessage(evt *events.Message) ParsedMessage {
@@ -48,7 +50,36 @@ func ParseLiveMessage(evt *events.Message) ParsedMessage {
 		msg.SenderJID = s
 	}
 
-	extractWAProto(evt.Message, &msg)
+	// Detect message edits from evt.Info.Edit.
+	if et := evt.Info.Edit; et != "" {
+		msg.EditType = string(et)
+	}
+
+	raw := evt.Message
+
+	// Unwrap FutureProofMessage envelope.
+	if raw != nil && raw.GetMessageContextInfo() != nil && raw.GetProtocolMessage() == nil {
+		// Some edits arrive wrapped in a FutureProofMessage container.
+	}
+
+	// Extract target ID from ProtocolMessage for edits and revokes.
+	if pm := raw.GetProtocolMessage(); pm != nil {
+		ptype := pm.GetType()
+		if ptype == waProto.ProtocolMessage_MESSAGE_EDIT || ptype == waProto.ProtocolMessage_REVOKE {
+			if key := pm.GetKey(); key != nil {
+				msg.EditTargetID = key.GetID()
+			}
+			if ptype == waProto.ProtocolMessage_MESSAGE_EDIT {
+				msg.EditType = "1"
+			}
+			// For edits, extract the edited message content.
+			if edited := pm.GetEditedMessage(); edited != nil {
+				raw = edited
+			}
+		}
+	}
+
+	extractWAProto(raw, &msg)
 	return msg
 }
 

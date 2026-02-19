@@ -95,14 +95,27 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 					}
 				}
 			}
-			if err := a.storeParsedMessage(ctx, pm); err == nil {
-				messagesStored.Add(1)
+			// Handle message edits: update the original message in-place.
+			if pm.EditTargetID != "" && pm.EditType == "1" {
+				displayText := a.buildDisplayText(ctx, pm)
+				_ = a.db.UpdateMessageEdit(pm.Chat.String(), pm.EditTargetID, pm.Text, displayText)
+				if err := a.storeParsedMessage(ctx, pm); err == nil {
+					messagesStored.Add(1)
+				}
+			} else {
+				if err := a.storeParsedMessage(ctx, pm); err == nil {
+					messagesStored.Add(1)
+				}
 			}
 			if opts.DownloadMedia && pm.Media != nil && pm.ID != "" {
 				enqueueMedia(pm.Chat.String(), pm.ID)
 			}
 			if messagesStored.Load()%25 == 0 {
 				fmt.Fprintf(os.Stderr, "\rSynced %d messages...", messagesStored.Load())
+			}
+		case *events.DeleteForMe:
+			if v.MessageID != "" {
+				_ = a.db.MarkMessageDeletedForMe(v.ChatJID.String(), v.MessageID, v.IsFromMe, v.Timestamp)
 			}
 		case *events.HistorySync:
 			fmt.Fprintf(os.Stderr, "\nProcessing history sync (%d conversations)...\n", len(v.Data.Conversations))
@@ -326,6 +339,10 @@ func (a *App) storeParsedMessage(ctx context.Context, pm wa.ParsedMessage) error
 		FileSHA256:    fileSha,
 		FileEncSHA256: fileEncSha,
 		FileLength:    fileLen,
+		EditType:      pm.EditType,
+		EditTargetID:  pm.EditTargetID,
+		ReactionToID:  pm.ReactionToID,
+		ReactionEmoji: pm.ReactionEmoji,
 	})
 }
 

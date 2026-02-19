@@ -25,6 +25,10 @@ type UpsertMessageParams struct {
 	FileSHA256    []byte
 	FileEncSHA256 []byte
 	FileLength    uint64
+	EditType      string
+	EditTargetID  string
+	ReactionToID  string
+	ReactionEmoji string
 }
 
 func (d *DB) UpsertMessage(p UpsertMessageParams) error {
@@ -32,8 +36,10 @@ func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 		INSERT INTO messages(
 			chat_jid, chat_name, msg_id, sender_jid, sender_name, ts, from_me, text, display_text,
 			media_type, media_caption, filename, mime_type, direct_path,
-			media_key, file_sha256, file_enc_sha256, file_length
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			media_key, file_sha256, file_enc_sha256, file_length,
+			edit_type, edit_target_id, updated_at,
+			reaction_to_id, reaction_emoji
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(chat_jid, msg_id) DO UPDATE SET
 			chat_name=COALESCE(NULLIF(excluded.chat_name,''), messages.chat_name),
 			sender_jid=excluded.sender_jid,
@@ -50,11 +56,36 @@ func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 			media_key=CASE WHEN excluded.media_key IS NOT NULL AND length(excluded.media_key)>0 THEN excluded.media_key ELSE messages.media_key END,
 			file_sha256=CASE WHEN excluded.file_sha256 IS NOT NULL AND length(excluded.file_sha256)>0 THEN excluded.file_sha256 ELSE messages.file_sha256 END,
 			file_enc_sha256=CASE WHEN excluded.file_enc_sha256 IS NOT NULL AND length(excluded.file_enc_sha256)>0 THEN excluded.file_enc_sha256 ELSE messages.file_enc_sha256 END,
-			file_length=CASE WHEN excluded.file_length>0 THEN excluded.file_length ELSE messages.file_length END
+			file_length=CASE WHEN excluded.file_length>0 THEN excluded.file_length ELSE messages.file_length END,
+			edit_type=COALESCE(NULLIF(excluded.edit_type,''), messages.edit_type),
+			edit_target_id=COALESCE(NULLIF(excluded.edit_target_id,''), messages.edit_target_id),
+			updated_at=COALESCE(excluded.updated_at, messages.updated_at),
+			reaction_to_id=COALESCE(NULLIF(excluded.reaction_to_id,''), messages.reaction_to_id),
+			reaction_emoji=COALESCE(NULLIF(excluded.reaction_emoji,''), messages.reaction_emoji)
 	`, p.ChatJID, nullIfEmpty(p.ChatName), p.MsgID, nullIfEmpty(p.SenderJID), nullIfEmpty(p.SenderName), unix(p.Timestamp), boolToInt(p.FromMe), nullIfEmpty(p.Text), nullIfEmpty(p.DisplayText),
 		nullIfEmpty(p.MediaType), nullIfEmpty(p.MediaCaption), nullIfEmpty(p.Filename), nullIfEmpty(p.MimeType), nullIfEmpty(p.DirectPath),
 		p.MediaKey, p.FileSHA256, p.FileEncSHA256, int64(p.FileLength),
+		nullIfEmpty(p.EditType), nullIfEmpty(p.EditTargetID), unix(p.Timestamp),
+		nullIfEmpty(p.ReactionToID), nullIfEmpty(p.ReactionEmoji),
 	)
+	return err
+}
+
+// UpdateMessageEdit updates an existing message in-place when an edit arrives.
+func (d *DB) UpdateMessageEdit(chatJID, targetMsgID, newText, newDisplayText string) error {
+	_, err := d.sql.Exec(`
+		UPDATE messages SET text = ?, display_text = ?
+		WHERE chat_jid = ? AND msg_id = ?
+	`, nullIfEmpty(newText), nullIfEmpty(newDisplayText), chatJID, targetMsgID)
+	return err
+}
+
+// MarkMessageDeletedForMe inserts a synthetic revoke row for delete-for-me events.
+func (d *DB) MarkMessageDeletedForMe(chatJID, targetMsgID string, isFromMe bool, ts time.Time) error {
+	_, err := d.sql.Exec(`
+		INSERT OR IGNORE INTO messages(chat_jid, msg_id, sender_jid, ts, from_me, edit_type, edit_target_id, updated_at)
+		VALUES (?, ?, '', ?, ?, '7', ?, ?)
+	`, chatJID, "dfm-"+targetMsgID, unix(ts), boolToInt(isFromMe), targetMsgID, unix(ts))
 	return err
 }
 
