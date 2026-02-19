@@ -18,6 +18,7 @@ var schemaMigrations = []migration{
 	{version: 1, name: "core schema", up: migrateCoreSchema},
 	{version: 2, name: "messages display_text column", up: migrateMessagesDisplayText},
 	{version: 3, name: "messages fts", up: migrateMessagesFTS},
+	{version: 4, name: "messages reaction columns", up: migrateMessagesReaction},
 }
 
 func (d *DB) ensureSchema() error {
@@ -247,6 +248,25 @@ func migrateMessagesFTS(d *DB) error {
 	}
 
 	d.ftsEnabled = true
+	return nil
+}
+
+func migrateMessagesReaction(d *DB) error {
+	cols := map[string]string{
+		"reaction_to_id": "TEXT",
+		"reaction_emoji": "TEXT",
+	}
+	for col, typ := range cols {
+		has, err := d.tableHasColumn("messages", col)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := d.sql.Exec(fmt.Sprintf("ALTER TABLE messages ADD COLUMN %s %s", col, typ)); err != nil {
+				return fmt.Errorf("add %s column: %w", col, err)
+			}
+		}
+	}
 	return nil
 }
 
